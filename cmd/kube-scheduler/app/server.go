@@ -20,12 +20,15 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	goruntime "runtime"
 
 	"github.com/spf13/cobra"
 
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
@@ -224,6 +227,51 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
 
 	// Leader election is disabled, so runCommand inline until done.
 	close(waitingForLeader)
+	//klog.V(3).InfoS("name for scheduler is :" + sched.Message.Name)
+	/*if sched.Message.Name == "sched1" {
+		klog.V(3).InfoS("got sched 1 server")
+		go sched.Open_server(ctx)
+	}
+	*/
+
+	/*if sched.Message.Name == "sched2" {
+		klog.V(3).InfoS("got sched 2 client")
+		go sched.Open_client(ctx)
+	}*/
+	var IP_toConnect string = ""
+	existingPod, err := cc.Client.CoreV1().Pods("kube-system").Get(ctx, "ip-helper", metav1.GetOptions{})
+	if err == nil {
+		existingAddress, exists := existingPod.Labels["IPaddress"]
+		if exists {
+			IP_toConnect = existingAddress
+		}
+	} else {
+		pod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ip-helper",
+				Labels: map[string]string{
+					"IPaddress": sched.Message.SelfIPAddress,
+				},
+			},
+			Spec: v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "example-container",
+						Image: "nginx:latest",
+					},
+				},
+			},
+		}
+
+		_, err = cc.Client.CoreV1().Pods("kube-system").Create(ctx, pod, metav1.CreateOptions{})
+		IP_toConnect = sched.Message.SelfIPAddress
+	}
+	if err != nil {
+		log.Fatalf("Could not create pod: %s", err)
+	}
+	go sched.Open_server(ctx)
+	go sched.Open_client(ctx, IP_toConnect)
+	go sched.Self_update(ctx)
 	sched.Run(ctx)
 	return fmt.Errorf("finished without leader elect")
 }
