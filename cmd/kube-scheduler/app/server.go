@@ -23,9 +23,10 @@ import (
 	"net/http"
 	"os"
 	goruntime "runtime"
+	"time"
 
 	"github.com/spf13/cobra"
-
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
@@ -222,8 +223,123 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
 
 	// Leader election is disabled, so runCommand inline until done.
 	close(waitingForLeader)
+	//klog.V(3).InfoS("name for scheduler is :" + sched.Message.Name)
+	/*if sched.Message.Name == "sched1" {
+		klog.V(3).InfoS("got sched 1 server")
+		go sched.Open_server(ctx)
+	}
+	*/
+
+	/*if sched.Message.Name == "sched2" {
+		klog.V(3).InfoS("got sched 2 client")
+		go sched.Open_client(ctx)
+	}*/
+	Add_label(ctx, cc, sched)
+	go Update_Conns(ctx, cc, sched)
+	/*
+		var IP_toConnect string = ""
+		existingPod, err := cc.Client.CoreV1().Pods("kube-system").Get(ctx, "ip-helper", metav1.GetOptions{})
+		if err == nil {
+			existingAddress, exists := existingPod.Labels["IPaddress"]
+			if exists {
+				IP_toConnect = existingAddress
+			}
+		} else {
+			pod := &v1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "ip-helper",
+					Labels: map[string]string{
+						"IPaddress": sched.Message.SelfIPAddress,
+					},
+				},
+				Spec: v1.PodSpec{
+					Containers: []v1.Container{
+						{
+							Name:  "example-container",
+							Image: "nginx:latest",
+						},
+					},
+				},
+			}
+
+			_, err = cc.Client.CoreV1().Pods("kube-system").Create(ctx, pod, metav1.CreateOptions{})
+			IP_toConnect = sched.Message.SelfIPAddress
+		}
+		if err != nil {
+			log.Fatalf("Could not create pod: %s", err)
+		}*/
+	//var IP_toConnect string = sched.Message.SelfIPAddress
+	//go sched.Open_server(ctx)
+	//go sched.Open_client(ctx, IP_toConnect)
+	//go sched.Self_update(ctx)
 	sched.Run(ctx)
 	return fmt.Errorf("finished without leader elect")
+}
+
+func Add_label(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *scheduler.Scheduler) error {
+	pod, err := cc.Client.CoreV1().Pods("kube-system").Get(ctx, os.Getenv("HOSTNAME"), metav1.GetOptions{})
+	if err != nil {
+		klog.V(3).InfoS("uhohhhhh prinde err add")
+		return err
+	}
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels["IPaddress"] = sched.Message.SelfIPAddress
+	for lab, ind := range pod.Labels {
+		klog.V(3).InfoS("labels existing: %s=%s ", lab, ind)
+	}
+	_, err = cc.Client.CoreV1().Pods("kube-system").Update(ctx, pod, metav1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+	klog.V(3).InfoS("Label value %s added to pod %s", sched.Message.SelfIPAddress, sched.Message.Name)
+	return nil
+}
+func contains(elts []string, str string) int {
+	for index, elt := range elts {
+		if elt == str {
+			return index
+		}
+	}
+	return -1
+}
+func compare(old []string, new []string) {
+	for _, olds := range old {
+		if contains(new, olds) < 0 {
+			klog.V(3).InfoS("Old IP adress %s disconnected", olds)
+		}
+	}
+	for _, news := range new {
+		if contains(old, news) < 0 {
+			klog.V(3).InfoS("New IP adress %s connected", news)
+		}
+	}
+}
+func Update_Conns(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *scheduler.Scheduler) error {
+	for {
+		pods, err := cc.Client.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
+			LabelSelector: "IPaddress",
+		})
+		if err != nil {
+			klog.V(3).InfoS("uhohhhhh prinde err update")
+			return err
+		}
+
+		var existingIPs []string
+		for _, pod := range pods.Items {
+			val, ok := pod.Labels["IPaddress"]
+			if ok {
+				existingIPs = append(existingIPs, val)
+			}
+		}
+		for i, elt := range existingIPs {
+			klog.V(3).InfoS("IPs no. %s that exist now are:  value %s ", i, elt)
+		}
+		compare(sched.IPAdressesList, existingIPs)
+		sched.IPAdressesList = existingIPs
+		time.Sleep(10 * time.Second)
+	}
 }
 
 // buildHandlerChain wraps the given handler with the standard filters.
