@@ -67,8 +67,15 @@ func (c *Cache) GetPod(pod *v1.Pod) (*v1.Pod, error) {
 // AddNode is a fake method for testing.
 func (c *Cache) AddNode(node *v1.Node) *framework.NodeInfo { return nil }
 
+func (c *Cache) GetNode(host string) *framework.NodeInfo { return nil }
+
 // UpdateNode is a fake method for testing.
 func (c *Cache) UpdateNode(oldNode, newNode *v1.Node) *framework.NodeInfo { return nil }
+
+// UpdatePod is a fake method for testing.
+func (c *Cache) UpdateNodeWithNewDuration(NodeName string, NodeDuration float64, sign int32) *framework.NodeInfo {
+	return nil
+}
 
 // RemoveNode is a fake method for testing.
 func (c *Cache) RemoveNode(node *v1.Node) error { return nil }

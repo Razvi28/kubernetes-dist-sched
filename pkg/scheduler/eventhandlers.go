@@ -188,8 +188,13 @@ func (sched *Scheduler) addPodToCache(obj interface{}) {
 
 	if err := sched.SchedulerCache.AddPod(pod); err != nil {
 		klog.ErrorS(err, "Scheduler cache AddPod failed", "pod", klog.KObj(pod))
+		klog.V(3).InfoS("Scheduler cache AddPod failed")
 	}
-
+	klog.V(3).InfoS("Passed Scheduler cache AddPod failed")
+	/*if err := sched.sendInfoToSchedulers(pod, sched.SchedulerCache.GetNode(pod.Spec.NodeName), 1); err != nil {
+		klog.V(3).InfoS("Error when sending info to other schedulers")
+	}*/
+	klog.V(3).InfoS("Passed when sending info to other schedulers")
 	sched.SchedulingQueue.AssignedPodAdded(pod)
 }
 
@@ -240,8 +245,13 @@ func (sched *Scheduler) deletePodFromCache(obj interface{}) {
 	klog.V(3).InfoS("Delete event for scheduled pod", "pod", klog.KObj(pod))
 	if err := sched.SchedulerCache.RemovePod(pod); err != nil {
 		klog.ErrorS(err, "Scheduler cache RemovePod failed", "pod", klog.KObj(pod))
+		klog.V(3).InfoS("Error when Removing pod")
 	}
-
+	klog.V(3).InfoS("Passed through removing pod")
+	/*if err := sched.sendInfoToSchedulers(pod, sched.SchedulerCache.GetNode(pod.Spec.NodeName), -1); err != nil {
+		klog.V(3).InfoS("Error when sending info to other schedulers")
+	}*/
+	klog.V(3).InfoS("Passed through sending info to other schedulers")
 	sched.SchedulingQueue.MoveAllToActiveOrBackoffQueue(queue.AssignedPodDelete, nil)
 }
 

@@ -20,10 +20,10 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-	"strconv"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -140,14 +140,14 @@ func (pi *PodInfo) DeepCopy() *PodInfo {
 		PreferredAffinityTerms:     pi.PreferredAffinityTerms,
 		PreferredAntiAffinityTerms: pi.PreferredAntiAffinityTerms,
 		ParseError:                 pi.ParseError,
-	        JobID:                      pi.JobID,
+		JobID:                      pi.JobID,
 	}
 }
 
 func getJobID(pod *v1.Pod) int64 {
 	for _, container := range pod.Spec.Containers {
-		for _, env := range container.Env{
-			if env.Name == "JOBPRIO"{
+		for _, env := range container.Env {
+			if env.Name == "JOBPRIO" {
 				jobid, _ := strconv.ParseInt(env.Value, 0, 0)
 				return jobid
 			}
@@ -531,14 +531,14 @@ func (r *Resource) SetMaxResource(rl v1.ResourceList) {
 // the returned object.
 func NewNodeInfo(pods ...*v1.Pod) *NodeInfo {
 	ni := &NodeInfo{
-		Requested:        &Resource{},
-		NonZeroRequested: &Resource{},
-		Allocatable:      &Resource{},
-		Generation:       nextGeneration(),
+		Requested:         &Resource{},
+		NonZeroRequested:  &Resource{},
+		Allocatable:       &Resource{},
+		Generation:        nextGeneration(),
 		EstimatedWaitTime: 0,
-		UsedPorts:        make(HostPortInfo),
-		ImageStates:      make(map[string]*ImageStateSummary),
-		PVCRefCounts:     make(map[string]int),
+		UsedPorts:         make(HostPortInfo),
+		ImageStates:       make(map[string]*ImageStateSummary),
+		PVCRefCounts:      make(map[string]int),
 	}
 	for _, pod := range pods {
 		ni.AddPod(pod)
@@ -557,14 +557,14 @@ func (n *NodeInfo) Node() *v1.Node {
 // Clone returns a copy of this node.
 func (n *NodeInfo) Clone() *NodeInfo {
 	clone := &NodeInfo{
-		node:             n.node,
-		Requested:        n.Requested.Clone(),
-		NonZeroRequested: n.NonZeroRequested.Clone(),
-		Allocatable:      n.Allocatable.Clone(),
-		UsedPorts:        make(HostPortInfo),
-		ImageStates:      n.ImageStates,
-		PVCRefCounts:     n.PVCRefCounts,
-		Generation:       n.Generation,
+		node:              n.node,
+		Requested:         n.Requested.Clone(),
+		NonZeroRequested:  n.NonZeroRequested.Clone(),
+		Allocatable:       n.Allocatable.Clone(),
+		UsedPorts:         make(HostPortInfo),
+		ImageStates:       n.ImageStates,
+		PVCRefCounts:      n.PVCRefCounts,
+		Generation:        n.Generation,
 		EstimatedWaitTime: n.EstimatedWaitTime,
 	}
 	if len(n.Pods) > 0 {
@@ -628,7 +628,6 @@ func (n *NodeInfo) AddPodInfo(podInfo *PodInfo) {
 
 	// Update EstimatedWaitTime of the node.
 	n.updateWaitTime(podInfo.Pod, true)
-
 	n.Generation = nextGeneration()
 }
 
@@ -773,8 +772,8 @@ func calculateResource(pod *v1.Pod) (res Resource, non0CPU int64, non0Mem int64)
 func (n *NodeInfo) updateWaitTime(pod *v1.Pod, add bool) {
 	found := false
 	for _, container := range pod.Spec.Containers {
-		for _, env := range container.Env{
-			if env.Name == "ESTRUNTIME"{
+		for _, env := range container.Env {
+			if env.Name == "ESTRUNTIME" {
 				// copy in the est time
 				estTime, _ := strconv.ParseFloat(env.Value, 32)
 				if add {
@@ -791,7 +790,6 @@ func (n *NodeInfo) updateWaitTime(pod *v1.Pod, add bool) {
 		}
 	}
 }
-
 
 // updateUsedPorts updates the UsedPorts of NodeInfo.
 func (n *NodeInfo) updateUsedPorts(pod *v1.Pod, add bool) {

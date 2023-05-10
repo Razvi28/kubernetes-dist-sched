@@ -181,11 +181,11 @@ func (cache *schedulerCache) Dump() *Dump {
 	klog.InfoS("SMITA Dumping cache nodes")
 	for k, v := range cache.nodes {
 		nodes[k] = v.info.Clone()
-		klog.InfoS("Node", k," -", v)
+		klog.InfoS("Node", k, " -", v)
 	}
 	klog.InfoS("SMITA Dumping cache headnode")
 	for node := cache.headNode; node != nil; node = node.next {
-		klog.InfoS("Node Info", node.info," and Node info Node() is nil?", node.info.Node() == nil)
+		klog.InfoS("Node Info", node.info, " and Node info Node() is nil?", node.info.Node() == nil)
 	}
 
 	return &Dump{
@@ -403,6 +403,7 @@ func (cache *schedulerCache) ForgetPod(pod *v1.Pod) error {
 	if err != nil {
 		return err
 	}
+	klog.V(3).InfoS("Forgetpod activated on %s;%s", pod.Name, pod.Spec.NodeName)
 
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -612,6 +613,18 @@ func (cache *schedulerCache) AddNode(node *v1.Node) *framework.NodeInfo {
 	return n.info.Clone()
 }
 
+func (cache *schedulerCache) GetNode(hostName string) *framework.NodeInfo {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+
+	n, ok := cache.nodes[hostName]
+	if !ok {
+		return nil
+	} else {
+		return n.info.Clone()
+	}
+}
+
 func (cache *schedulerCache) UpdateNode(oldNode, newNode *v1.Node) *framework.NodeInfo {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -629,6 +642,30 @@ func (cache *schedulerCache) UpdateNode(oldNode, newNode *v1.Node) *framework.No
 	cache.nodeTree.updateNode(oldNode, newNode)
 	cache.addNodeImageStates(newNode, n.info)
 	n.info.SetNode(newNode)
+	klog.V(3).InfoS("Node ET existed, updating WaitTime now to %f", n.info.EstimatedWaitTime)
+	return n.info.Clone()
+}
+func (cache *schedulerCache) UpdateNodeWithNewDuration(NodeName string, NodeDuration float64, sign int32) *framework.NodeInfo {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	n, ok := cache.nodes[NodeName]
+	if !ok {
+		n = newNodeInfoListItem(framework.NewNodeInfo())
+		n.info.EstimatedWaitTime += NodeDuration * float64(sign)
+		/*if cache.nodes[NodeName].info.EstimatedWaitTime < 0 {
+			cache.nodes[NodeName].info.EstimatedWaitTime = 0
+		}*/
+		cache.nodes[NodeName] = n
+		klog.V(3).InfoS("Node %s existed, updating WaitTime now to %s, after %b", NodeName, fmt.Sprintf("%.10f", NodeDuration), sign)
+		klog.V(3).InfoS("To check : Node %s has WaitTime now to %s, after %b", NodeName, fmt.Sprintf("%.10f", n.info.EstimatedWaitTime), sign)
+	} else {
+		cache.nodes[NodeName].info.EstimatedWaitTime += NodeDuration * float64(sign)
+		/*if cache.nodes[NodeName].info.EstimatedWaitTime < 0 {
+			cache.nodes[NodeName].info.EstimatedWaitTime = 0
+		}*/
+		klog.V(3).InfoS("Node %s existed, updating WaitTime now to %s, after %b", NodeName, fmt.Sprintf("%.10f", NodeDuration), sign)
+		klog.V(3).InfoS("To check : Node %s has WaitTime now to %s, after %b", NodeName, fmt.Sprintf("%.10f", n.info.EstimatedWaitTime), sign)
+	}
 	return n.info.Clone()
 }
 

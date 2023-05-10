@@ -20,12 +20,14 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	goruntime "runtime"
 	"time"
 
 	"github.com/spf13/cobra"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
@@ -223,59 +225,65 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
 
 	// Leader election is disabled, so runCommand inline until done.
 	close(waitingForLeader)
-	//klog.V(3).InfoS("name for scheduler is :" + sched.Message.Name)
-	/*if sched.Message.Name == "sched1" {
-		klog.V(3).InfoS("got sched 1 server")
-		go sched.Open_server(ctx)
-	}
-	*/
 
-	/*if sched.Message.Name == "sched2" {
-		klog.V(3).InfoS("got sched 2 client")
-		go sched.Open_client(ctx)
-	}*/
-	Add_label(ctx, cc, sched)
-	go Update_Conns(ctx, cc, sched)
-	/*
-		var IP_toConnect string = ""
-		existingPod, err := cc.Client.CoreV1().Pods("kube-system").Get(ctx, "ip-helper", metav1.GetOptions{})
-		if err == nil {
-			existingAddress, exists := existingPod.Labels["IPaddress"]
-			if exists {
-				IP_toConnect = existingAddress
-			}
-		} else {
-			pod := &v1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "ip-helper",
-					Labels: map[string]string{
-						"IPaddress": sched.Message.SelfIPAddress,
-					},
-				},
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{
-						{
-							Name:  "example-container",
-							Image: "nginx:latest",
-						},
-					},
-				},
-			}
+	go sched.Open_server(ctx) //Open gRPC server for incoming connections
+	//Add_label + Update_Conns functions used for Control-plane detection with kube-etcd
+	//Add_label(ctx, cc, sched)
+	//go Update_Conns(ctx, cc, sched)
 
-			_, err = cc.Client.CoreV1().Pods("kube-system").Create(ctx, pod, metav1.CreateOptions{})
-			IP_toConnect = sched.Message.SelfIPAddress
-		}
-		if err != nil {
-			log.Fatalf("Could not create pod: %s", err)
-		}*/
-	//var IP_toConnect string = sched.Message.SelfIPAddress
-	//go sched.Open_server(ctx)
-	//go sched.Open_client(ctx, IP_toConnect)
+	//Start_grpc_control_plane + InformOtherSchedulers + Heartbeat - EXTENSION - Contorl Plane detection with gRPC
+	Start_grpc_control_plane(ctx, cc, sched)
+	go sched.InformOtherSchedulers(ctx)
+	go sched.Heartbeat(ctx)
+
+	//Open_client +Self_Update -> alternative way of constructing the control plane using grpc; not fully implemented
 	//go sched.Self_update(ctx)
+	//go sched.Open_client(ctx,Ip_toConnect)
 	sched.Run(ctx)
 	return fmt.Errorf("finished without leader elect")
 }
+func Start_grpc_control_plane(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *scheduler.Scheduler) error {
+	var IP_toConnect map[string]string
+	existingPod, err := cc.Client.CoreV1().Pods("default").Get(ctx, "ip-helper", metav1.GetOptions{})
+	if err == nil {
+		IP_toConnect = existingPod.Labels
+		IPAdressesList := []string{}
+		for _, ip := range IP_toConnect {
+			IPAdressesList = append(IPAdressesList, ip)
+		}
+		IP_toConnect[sched.Message.Name] = sched.Message.SelfIPAddress
+		existingPod.Labels = IP_toConnect
+		sched.IPAdressesList = IPAdressesList
+		_, err = cc.Client.CoreV1().Pods("default").Update(ctx, existingPod, metav1.UpdateOptions{})
+		if err != nil {
+			log.Fatalf("Could not update pod: %s", err)
+		}
+	} else {
+		IP_toConnect = nil
+		pod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ip-helper",
+				Labels: map[string]string{
+					sched.Message.Name: sched.Message.SelfIPAddress,
+				},
+			},
+			Spec: v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "example-container",
+						Image: "nginx:latest",
+					},
+				},
+			},
+		}
 
+		_, err = cc.Client.CoreV1().Pods("default").Create(ctx, pod, metav1.CreateOptions{})
+		if err != nil {
+			log.Fatalf("Could not create pod: %s", err)
+		}
+	}
+	return nil
+}
 func Add_label(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *scheduler.Scheduler) error {
 	pod, err := cc.Client.CoreV1().Pods("kube-system").Get(ctx, os.Getenv("HOSTNAME"), metav1.GetOptions{})
 	if err != nil {
@@ -333,12 +341,9 @@ func Update_Conns(ctx context.Context, cc *schedulerserverconfig.CompletedConfig
 				existingIPs = append(existingIPs, val)
 			}
 		}
-		for i, elt := range existingIPs {
-			klog.V(3).InfoS("IPs no. %s that exist now are:  value %s ", i, elt)
-		}
 		compare(sched.IPAdressesList, existingIPs)
 		sched.IPAdressesList = existingIPs
-		time.Sleep(10 * time.Second)
+		time.Sleep(2 * time.Second)
 	}
 }
 

@@ -22,11 +22,15 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"os"
+	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/golang/protobuf/ptypes"
 	grpc "google.golang.org/grpc"
 	insecure "google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -78,7 +82,7 @@ type Scheduler struct {
 	Extenders []framework.Extender
 
 	// NextPod should be a function that blocks until the next pod
-	// is available. We don't use a channel for this, because scheduling
+	// is available. We don't use a channel for this, be cause scheduling
 	// a pod may take some amount of time and we don't want pods to get
 	// stale while they sit in a channel.
 	NextPod func() *framework.QueuedPodInfo
@@ -322,6 +326,7 @@ func unionedGVKs(m map[framework.ClusterEvent]sets.String) map[framework.GVK]fra
 
 // Run begins watching and scheduling. It starts scheduling and blocked until the context is done.
 func (sched *Scheduler) Run(ctx context.Context) {
+	//NodeInfoChannel := make(chan NodeInfo)
 	sched.SchedulingQueue.Run()
 	wait.UntilWithContext(ctx, sched.scheduleOne, 0)
 	sched.SchedulingQueue.Close()
@@ -329,29 +334,25 @@ func (sched *Scheduler) Run(ctx context.Context) {
 
 type SchedulerServer struct {
 	UnimplementedSchedServer
-	ServerIP              string
-	EstablishedConnServer []string
-	//IPAdresses            []string
+	ServerIP                 string
+	EstablishedConnServer    []string
+	SelfUpdateNodeInfo       func(response NodeUpdate)
+	SelfUpdateNewSchedulerIP func(update InitialUpdateConn)
+	ServersideSchedulerName  string
+}
+type NodeUpdate struct {
+	Node_Name  string
+	Pod_Name   string
+	Duration   float64
+	Sign       int32
+	Ts0        *timestamppb.Timestamp
+	Ts1        *timestamppb.Timestamp
+	Sched_Name string
+}
+type InitialUpdateConn struct {
+	New_IP_Connected string
 }
 
-/*
-	func getSampleBooks() []*Book {
-		var carte Book
-		carte.Author = "autor"
-		carte.Language = "limba"
-		carte.PageCount = 123
-		carte.Title = "titlu"
-		return []*Book{
-			&carte,
-		}
-	}
-
-	func (s *server) GetBookList(ctx context.Context, in *GetBookListRequest) (*GetBookListResponse, error) {
-		return &GetBookListResponse{
-			Books: getSampleBooks(),
-		}, nil
-	}
-*/
 func contains(elts []string, str string) int {
 	for index, elt := range elts {
 		if elt == str {
@@ -383,38 +384,11 @@ func union(sa []string, sb []string) []string {
 	return sa
 }
 func (sched *Scheduler) GetIP() (string, error) {
-	/*(ifaces, err := net.Interfaces()
-	if err != nil {
-		klog.V(3).InfoS("failed to use net.Interfaces : %v", err)
-		log.Fatalf("failed to use net.Interfaces: %v", err)
-	}
-	klog.V(3).InfoS("got to ifaces and passed sth")
-	var ip net.IP
-	for _, i := range ifaces {
-		addrs, err := i.Addrs()
-		if err != nil {
-			klog.V(3).InfoS("failed to use i.Addrs() : %v", err)
-			log.Fatalf("failed to use i.Addrs(): %v", err)
-		}
-		for _, addr := range addrs {
-
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			klog.V(3).InfoS("got ip: %s", ip.String())
-		}
-
-	}
-	return ip.To4().String(), nil*/
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "", err
 	}
 	for _, address := range addrs {
-		// check the address type and if it is not a loopback the display it
 		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 			if ipnet.IP.To4() != nil {
 				return ipnet.IP.String(), nil
@@ -424,7 +398,6 @@ func (sched *Scheduler) GetIP() (string, error) {
 	return "", err
 }
 func (s *SchedulerServer) GetSchedName(ctx context.Context, in *SchedNameRequest) (*SchedNameResponse, error) {
-	//deletion issues - still keeps all the previous ips - fix
 	s.EstablishedConnServer = union(s.EstablishedConnServer, []string{in.SelfIPAddress})
 	klog.V(3).InfoS("Server-side: Connexions: %s", s.EstablishedConnServer)
 	return &SchedNameResponse{Name: "Hello, " + in.GetName() + "! Gotcha",
@@ -432,19 +405,37 @@ func (s *SchedulerServer) GetSchedName(ctx context.Context, in *SchedNameRequest
 		RemainingConnIP:   subtract(subtract(s.EstablishedConnServer, in.EstablishedConnIP), []string{s.ServerIP})}, nil
 }
 
+func (s *SchedulerServer) SendNodeInfo(ctx context.Context, in *NodeInfo) (*NodeInfoResponse, error) {
+	return_timestamp := timestamppb.New(time.Now())
+	s.SelfUpdateNodeInfo(NodeUpdate{
+		Node_Name:  in.NodeName,
+		Duration:   in.Duration,
+		Sign:       in.Sign,
+		Ts0:        in.Timestamp,
+		Ts1:        return_timestamp,
+		Sched_Name: in.SchedulerName,
+		Pod_Name:   in.PodName,
+	})
+	return &NodeInfoResponse{Done: true, Timestamp: return_timestamp, SchedulerName: s.ServersideSchedulerName}, nil
+}
+
+func (s *SchedulerServer) SendInitialConnection(ctx context.Context, in *InitialUpdate) (*InitialResponse, error) {
+
+	s.SelfUpdateNewSchedulerIP(InitialUpdateConn{
+		New_IP_Connected: in.NewIpConnected,
+	})
+	return &InitialResponse{Done: true}, nil
+}
+func (s *SchedulerServer) SendHeartbeatRequest(ctx context.Context, in *Heartbeat) (*Heartbeat, error) {
+
+	return &Heartbeat{Alive: true}, nil
+}
+
 func (s *SchedulerServer) SelfUpdate(ctx context.Context, in *SchedNameRequest) (*UpdateResponse, error) {
 
 	return &UpdateResponse{Name: "Hello, " + in.GetName() + "! Gotcha",
 		EstablishedConnIP: s.EstablishedConnServer}, nil // or subtract its own ip here
 }
-
-/*
-	var (
-	crt = "scheduler/server.crt"
-	key = "scheduler/server.key"
-
-)
-*/
 
 func (sched *Scheduler) Self_update(ctx context.Context) {
 
@@ -454,8 +445,6 @@ func (sched *Scheduler) Self_update(ctx context.Context) {
 	}
 	client := NewSchedClient(conn)
 	for conn.GetState().String() != "READY" {
-		//klog.V(3).InfoS(conn.GetState().String())
-		//conn.WaitForStateChange(ctx, connectivity.Idle)
 		time.Sleep(time.Second)
 	}
 	klog.V(3).InfoS(conn.GetState().String())
@@ -476,55 +465,205 @@ func (sched *Scheduler) Self_update(ctx context.Context) {
 	}
 }
 
-// Open_client starts creating a stub for the schedulers that will be activated
 func (sched *Scheduler) Open_server(ctx context.Context) {
-
-	/*creds, err := credentials.NewServerTLSFromFile(crt, key)
-	if err != nil {
-		log.Fatalf("could not load TLS keys: %s", err)
-	}*/
-	//flag.Parse()
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 8210))
 	klog.V(3).InfoS(lis.Addr().String())
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	grpcServer := grpc.NewServer() //grpc.Creds(creds))
+
+	grpcServer := grpc.NewServer()
 	IPserver, err := sched.GetIP()
 	if err != nil {
 		log.Fatalf("failed to get IP: %v", err)
 	}
 	klog.V(3).InfoS("used IP string is : %s", IPserver)
-	RegisterSchedServer(grpcServer, &SchedulerServer{ServerIP: IPserver,
+	SelfUpdateChan := make(chan NodeUpdate)
+	SelfUpdateNewSchedulerIPChan := make(chan InitialUpdateConn)
+	myServer := &SchedulerServer{
+
+		ServerIP:              IPserver,
 		EstablishedConnServer: []string{},
-	})
+		SelfUpdateNodeInfo: func(response NodeUpdate) {
+			SelfUpdateChan <- response
+		},
+		SelfUpdateNewSchedulerIP: func(update InitialUpdateConn) {
+			SelfUpdateNewSchedulerIPChan <- update
+		},
+
+		ServersideSchedulerName: sched.Message.Name,
+	}
+	RegisterSchedServer(grpcServer, myServer)
 	klog.V(3).InfoS("server registered")
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("failed to listen: %v", err)
+	go func() {
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("failed to listen: %v", err)
+		}
+	}()
+	go func() {
+		for newIP := range SelfUpdateNewSchedulerIPChan {
+			sched.IPAdressesList = append(sched.IPAdressesList, newIP.New_IP_Connected)
+		}
+	}()
+	{
+		for NewNodeUpdate := range SelfUpdateChan {
+			old_node := sched.SchedulerCache.GetNode(NewNodeUpdate.Node_Name)
+			new_node := sched.SchedulerCache.GetNode(NewNodeUpdate.Node_Name)
+			new_node.EstimatedWaitTime += NewNodeUpdate.Duration * float64(NewNodeUpdate.Sign)
+			sched.SchedulerCache.UpdateNode(old_node.Node(), new_node.Node())
+			final_timestamp := timestamppb.New(time.Now())
+			calculate_time_diff(sched.Message.Name, NewNodeUpdate.Sched_Name, NewNodeUpdate.Pod_Name, NewNodeUpdate.Ts0, final_timestamp)
+		}
 	}
 
 	klog.V(3).InfoS("exiting")
 }
+func (sched *Scheduler) sendInfoToSchedulers(pod *v1.Pod, host_node *framework.NodeInfo, sign int32) error {
+	pod_name := pod.Name
+	delimiter := regexp.MustCompile("[0-9]+")
+	split := delimiter.Split(pod_name, -1)
+	if split[0] == "nginx" {
+
+		for _, conn := range sched.IPAdressesList {
+			if sched.Message.SelfIPAddress != conn {
+				if err := sched.SendInfoToSchedulers(conn, pod, host_node, sign); err != nil {
+					klog.V(3).InfoS("ErrorsendInfoToScheds")
+					return err
+				}
+			}
+		}
+	}
+	return nil
+
+}
+func calculate_time_diff(host_sched, sched_name_from, pod_name string, t0, t1 *timestamppb.Timestamp) {
+	ts0, _ := ptypes.Timestamp(t0)
+	ts1, _ := ptypes.Timestamp(t1)
+	tdiff := ts1.Sub(ts0)
+	var f *os.File
+	if _, err := os.Stat("logs_grpc_" + host_sched + ".log"); os.IsNotExist(err) {
+		f, err = os.Create("logs_grpc_" + host_sched + ".log")
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		f, _ = os.OpenFile("logs_grpc_"+host_sched+".log", os.O_APPEND|os.O_WRONLY, 0644)
+	}
+	defer f.Close()
+	str_diff := fmt.Sprintf("%v", tdiff.Seconds()*1000)
+	klog.V(3).InfoS(host_sched + " received from " + sched_name_from + " and assigned pod " + pod_name + " in " + str_diff + " ms\n")
+	if _, err := f.WriteString(host_sched + " received from " + sched_name_from + " and assigned pod " + pod_name + " in " + str_diff + " ms\n"); err != nil {
+		panic(err)
+	}
+
+}
+func (sched *Scheduler) SendInfoToSchedulers(ip string, pod *v1.Pod, host_node *framework.NodeInfo, sign int32) error {
+	conn, err := grpc.Dial(ip+":8210", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		klog.V(3).InfoS("fail to dial: %v", err)
+		return err
+	}
+	client := NewSchedClient(conn)
+	try_limit := 15
+	for conn.GetState().String() != "READY" && try_limit > 0 {
+		time.Sleep(time.Second)
+		try_limit--
+	}
+	klog.V(3).InfoS(conn.GetState().String())
+	time_now := timestamppb.New(time.Now())
+	_, err = client.SendNodeInfo(context.Background(), &NodeInfo{NodeName: host_node.Node().Name,
+		Duration:      host_node.EstimatedWaitTime,
+		Sign:          sign,
+		Timestamp:     time_now,
+		SchedulerName: sched.Message.Name,
+		PodName:       pod.Name,
+	})
+	if err != nil {
+		klog.V(3).InfoS("Error Send Node Info: %v", err)
+		return err
+	}
+	return nil
+}
+
+func (sched *Scheduler) InformOtherSchedulers(ctx context.Context) {
+	for _, IPAdress := range sched.IPAdressesList {
+		sched.InformScheduler(IPAdress)
+	}
+
+}
+func (sched *Scheduler) InformScheduler(ip string) error {
+
+	conn, err := grpc.Dial(ip+":8210", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		klog.V(3).InfoS("fail to dial: %v", err)
+		return err
+	}
+	client := NewSchedClient(conn)
+	try_limit := 15
+	for conn.GetState().String() != "READY" && try_limit > 0 {
+		time.Sleep(time.Second)
+		try_limit--
+	}
+	_, err = client.SendInitialConnection(context.Background(), &InitialUpdate{
+		NewIpConnected: sched.Message.SelfIPAddress,
+	})
+	if err != nil {
+		klog.V(3).InfoS("Error Sending Initil Connection: %v", err)
+		return err
+	}
+	return nil
+
+}
+func (sched *Scheduler) Heartbeat(ctx context.Context) {
+	{
+		updatedIPAdressesList := sched.IPAdressesList
+		for _, IPAdress := range sched.IPAdressesList {
+			if sched.ObtainHeartbeat(IPAdress) == nil {
+				updatedIPAdressesList = append(updatedIPAdressesList, IPAdress)
+			}
+		}
+		sched.IPAdressesList = updatedIPAdressesList
+		time.Sleep(60 * time.Second)
+	}
+}
+
+func (sched *Scheduler) ObtainHeartbeat(ip string) error {
+
+	conn, err := grpc.Dial(ip+":8210", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		klog.V(3).InfoS("fail to dial: %v", err)
+		return err
+	}
+	client := NewSchedClient(conn)
+	try_limit := 15
+	for conn.GetState().String() != "READY" && try_limit > 0 {
+		time.Sleep(time.Second)
+		try_limit--
+	}
+	resp, err := client.SendHeartbeatRequest(context.Background(), &Heartbeat{
+		Alive: true,
+	})
+	if resp.Alive == true {
+		return nil
+	}
+	if err != nil {
+		klog.V(3).InfoS("Error Sending Initil Connection: %v", err)
+		return err
+	}
+	return nil
+
+}
 
 // Open_client starts creating a stub for the schedulers that will be activated
 func (sched *Scheduler) Open_client(ctx context.Context, ip string) {
-
-	/*conn, err := grpc.Dial("10.244.1.233:8210", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	//creds, err := credentials.NewClientTLSFromFile(crt, "")
-	if err != nil {
-		klog.V(3).InfoS("fail to dial:%s", err)
-	}*/
 	klog.V(3).InfoS("ip  =  %s", ip)
 	conn, err := grpc.Dial(ip+":8210", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		klog.V(3).InfoS("fail to dial: %v", err)
 	}
 	client := NewSchedClient(conn)
-	//client := NewInventoryClient(conn)
 	klog.V(3).InfoS(conn.GetState().String())
 	for conn.GetState().String() != "READY" {
-		//klog.V(3).InfoS(conn.GetState().String())
-		//conn.WaitForStateChange(ctx, connectivity.Idle)
 		time.Sleep(time.Second)
 	}
 	klog.V(3).InfoS(conn.GetState().String())
@@ -550,7 +689,6 @@ func (sched *Scheduler) Open_client(ctx context.Context, ip string) {
 		newclient := NewSchedClient(connexion)
 		klog.V(3).InfoS(connexion.GetState().String())
 		for connexion.GetState().String() != "READY" {
-			//klog.V(3).InfoS(connexion.GetState().String())
 			time.Sleep(time.Second)
 		}
 		klog.V(3).InfoS(conn.GetState().String())
@@ -570,11 +708,9 @@ func (sched *Scheduler) Open_client(ctx context.Context, ip string) {
 		}
 	}
 	sched.IPAdressesList = union(sched.IPAdressesList, obj.EstablishedConnIP)
-	//to_log, _ := client.GetSchedName(ctx, &SchedNameRequest{})
 	klog.V(3).InfoS("got to name?")
 	klog.V(3).InfoS(obj.GetName())
 	klog.V(3).InfoS(obj.String())
-	//to obj.GetToConnect()
 	// REFLEXIVE CALL NEEDED CLIENT TO SERVER FOR SAVING ONTO SCHEDULER
 	klog.V(3).InfoS("len IPlist: %d", len(sched.IPAdressesList))
 	for _, el := range sched.IPAdressesList {
@@ -644,6 +780,12 @@ func (sched *Scheduler) add(pod *v1.Pod, host string) error {
 		klog.ErrorS(err, "Scheduler cache AddPod failed")
 		return err
 	}
+	//if pod.Spec.SchedulerName == sched.Message.Name {
+	if err := sched.sendInfoToSchedulers(pod, sched.SchedulerCache.GetNode(host), 1); err != nil {
+		klog.V(3).InfoS("Error when sending info to other schedulers")
+		return err
+	}
+	//}
 	// if "assumed" is a nominated pod, we should remove it from internal cache
 	if sched.SchedulingQueue != nil {
 		sched.SchedulingQueue.DeleteNominatedPodIfExists(pod)
@@ -707,9 +849,6 @@ var (
 // scheduleOne does the entire scheduling workflow for a single pod. It is serialized on the scheduling algorithm's host fitting.
 func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	podInfo := sched.NextPod()
-	klog.V(3).InfoS("Changed Scheduler and works")
-	klog.V(3).InfoS("is it actually? ? ? ? ?")
-	klog.V(4).InfoS("nh")
 	// pod could be nil when schedulerQueue is closed
 	if podInfo == nil || podInfo.Pod == nil {
 		return
@@ -803,6 +942,10 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		if forgetErr := sched.SchedulerCache.ForgetPod(assumedPod); forgetErr != nil {
 			klog.ErrorS(forgetErr, "Scheduler cache ForgetPod failed")
 		}
+		/*if err := sched.sendInfoToSchedulers(pod, sched.SchedulerCache.GetNode(pod.Spec.NodeName), -1); err != nil {
+			klog.V(3).InfoS("Error when sending info to other schedulers")
+			return
+		}*/
 		sched.recordSchedulingFailure(fwk, assumedPodInfo, sts.AsError(), SchedulerError, clearNominatedNode)
 		return
 	}
@@ -823,6 +966,10 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		if forgetErr := sched.SchedulerCache.ForgetPod(assumedPod); forgetErr != nil {
 			klog.ErrorS(forgetErr, "Scheduler cache ForgetPod failed")
 		}
+		/*if err := sched.sendInfoToSchedulers(pod, sched.SchedulerCache.GetNode(pod.Spec.NodeName), -1); err != nil {
+			klog.V(3).InfoS("Error when sending info to other schedulers")
+			return
+		}*/
 		sched.recordSchedulingFailure(fwk, assumedPodInfo, runPermitStatus.AsError(), reason, clearNominatedNode)
 		return
 	}
@@ -856,6 +1003,10 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			if forgetErr := sched.SchedulerCache.ForgetPod(assumedPod); forgetErr != nil {
 				klog.ErrorS(forgetErr, "scheduler cache ForgetPod failed")
 			} else {
+				/*if err := sched.sendInfoToSchedulers(pod, sched.SchedulerCache.GetNode(pod.Spec.NodeName), -1); err != nil {
+					klog.V(3).InfoS("Error when sending info to other schedulers")
+					return
+				}*/
 				// "Forget"ing an assumed Pod in binding cycle should be treated as a PodDelete event,
 				// as the assumed Pod had occupied a certain amount of resources in scheduler cache.
 				// TODO(#103853): de-duplicate the logic.
@@ -879,6 +1030,10 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			if forgetErr := sched.SchedulerCache.ForgetPod(assumedPod); forgetErr != nil {
 				klog.ErrorS(forgetErr, "scheduler cache ForgetPod failed")
 			} else {
+				/*if err := sched.sendInfoToSchedulers(pod, sched.SchedulerCache.GetNode(pod.Spec.NodeName), -1); err != nil {
+					klog.V(3).InfoS("Error when sending info to other schedulers")
+					return
+				}*/
 				// "Forget"ing an assumed Pod in binding cycle should be treated as a PodDelete event,
 				// as the assumed Pod had occupied a certain amount of resources in scheduler cache.
 				// TODO(#103853): de-duplicate the logic.
@@ -896,6 +1051,10 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			if err := sched.SchedulerCache.ForgetPod(assumedPod); err != nil {
 				klog.ErrorS(err, "scheduler cache ForgetPod failed")
 			} else {
+				/*if err := sched.sendInfoToSchedulers(pod, sched.SchedulerCache.GetNode(pod.Spec.NodeName), -1); err != nil {
+					klog.V(3).InfoS("Error when sending info to other schedulers")
+					return
+				}*/
 				// "Forget"ing an assumed Pod in binding cycle should be treated as a PodDelete event,
 				// as the assumed Pod had occupied a certain amount of resources in scheduler cache.
 				// TODO(#103853): de-duplicate the logic.
