@@ -1,20 +1,3 @@
-/*syntax = "proto3";
-
-option go_package = ".";
-
-message Book {
-  string title = 1;
-  string author = 2;
-  int32 page_count = 3;
-  string language = 4;
-}
-
-message GetBookListRequest {}
-message GetBookListResponse { repeated Book books = 1; }
-
-service Inventory {
-  rpc GetBookList(GetBookListRequest) returns (GetBookListResponse) {}
-}*/
 syntax = "proto3";
 package scheduler;
 import "google/protobuf/timestamp.proto";
@@ -68,18 +51,3 @@ message InitialResponse{
 message Heartbeat{
     bool alive=1;
 }
-   /* int32 latitude=2;
-    int32 longitude=3;
-    message PodInfo{
-        string details=1;
-    } 
-    repeated PodInfo pods =4;
-    google.protobuf.Timestamp last_updated = 5;
-    
-}
-message ToSend{
-    repeated Testinfo logs = 1;
-}
-service RouteGuide {
-//    rpc GetFeature(stream Testinfo) returns (stream Feature) {}
- }*/
