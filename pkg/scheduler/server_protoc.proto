@@ -1,0 +1,85 @@
+/*syntax = "proto3";
+
+option go_package = ".";
+
+message Book {
+  string title = 1;
+  string author = 2;
+  int32 page_count = 3;
+  string language = 4;
+}
+
+message GetBookListRequest {}
+message GetBookListResponse { repeated Book books = 1; }
+
+service Inventory {
+  rpc GetBookList(GetBookListRequest) returns (GetBookListResponse) {}
+}*/
+syntax = "proto3";
+package scheduler;
+import "google/protobuf/timestamp.proto";
+option go_package = ".";
+service Sched {
+    rpc GetSchedName(SchedNameRequest) returns (SchedNameResponse) {
+    }
+    rpc SelfUpdate(SchedNameRequest) returns (UpdateResponse) {
+    }
+    rpc SendNodeInfo(NodeInfo) returns (NodeInfoResponse){
+    } 
+    rpc SendInitialConnection(InitialUpdate) returns (InitialResponse){
+    }
+    rpc SendHeartbeatRequest(Heartbeat) returns (Heartbeat){
+    }
+ }
+message SchedNameRequest{
+    string name = 1;
+    string SelfIPAddress = 2;
+    repeated string EstablishedConnIP = 3;
+    repeated string RemainingConnIP = 4;
+}
+message SchedNameResponse{
+    string name = 1;
+    repeated string EstablishedConnIP = 3;
+    repeated string RemainingConnIP = 4;
+}
+message UpdateResponse{
+    string name = 1;
+    repeated string EstablishedConnIP = 3;
+}
+message NodeInfo{
+    string node_name = 1;
+    double duration = 2;
+    int32 sign = 3;
+    google.protobuf.Timestamp timestamp = 4;
+    string scheduler_name = 5;
+    string pod_name = 6;
+}
+message NodeInfoResponse{
+    bool done = 1;
+    google.protobuf.Timestamp timestamp = 2;
+    string scheduler_name = 3;
+}
+message InitialUpdate{
+    string new_ip_connected=1;
+}
+message InitialResponse{
+   bool done=1;
+}
+message Heartbeat{
+    bool alive=1;
+}
+   /* int32 latitude=2;
+    int32 longitude=3;
+    message PodInfo{
+        string details=1;
+    } 
+    repeated PodInfo pods =4;
+    google.protobuf.Timestamp last_updated = 5;
+    
+}
+message ToSend{
+    repeated Testinfo logs = 1;
+}
+service RouteGuide {
+//    rpc GetFeature(stream Testinfo) returns (stream Feature) {}
+ }*/
